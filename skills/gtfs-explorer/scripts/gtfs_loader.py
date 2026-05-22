@@ -6,6 +6,7 @@ Usage:
     feed = load_gtfs("path/to/feed.zip")  # dict of DataFrames
     active = service_ids_active_on(feed, "20250315")  # set[str]
 """
+
 from __future__ import annotations
 
 import datetime as _dt
@@ -18,20 +19,55 @@ import pandas as pd
 
 # All ID columns in the spec — read as strings to avoid silent type breakage on merges.
 _ID_COLS = {
-    "agency_id", "stop_id", "route_id", "trip_id", "service_id", "shape_id",
-    "block_id", "zone_id", "parent_station", "fare_id", "pathway_id",
-    "level_id", "from_stop_id", "to_stop_id", "from_route_id", "to_route_id",
-    "from_trip_id", "to_trip_id", "network_id", "area_id", "location_group_id",
-    "fare_product_id", "fare_media_id", "rider_category_id",
-    "from_leg_group_id", "to_leg_group_id", "leg_group_id",
-    "from_area_id", "to_area_id",
-    "timeframe_group_id", "from_timeframe_group_id", "to_timeframe_group_id",
-    "booking_rule_id", "pickup_booking_rule_id", "drop_off_booking_rule_id",
-    "attribution_id", "record_id", "record_sub_id",
+    "agency_id",
+    "stop_id",
+    "route_id",
+    "trip_id",
+    "service_id",
+    "shape_id",
+    "block_id",
+    "zone_id",
+    "parent_station",
+    "fare_id",
+    "pathway_id",
+    "level_id",
+    "from_stop_id",
+    "to_stop_id",
+    "from_route_id",
+    "to_route_id",
+    "from_trip_id",
+    "to_trip_id",
+    "network_id",
+    "area_id",
+    "location_group_id",
+    "fare_product_id",
+    "fare_media_id",
+    "rider_category_id",
+    "from_leg_group_id",
+    "to_leg_group_id",
+    "leg_group_id",
+    "from_area_id",
+    "to_area_id",
+    "timeframe_group_id",
+    "from_timeframe_group_id",
+    "to_timeframe_group_id",
+    "booking_rule_id",
+    "pickup_booking_rule_id",
+    "drop_off_booking_rule_id",
+    "attribution_id",
+    "record_id",
+    "record_sub_id",
     # Date columns — strings, not ints (preserves YYYYMMDD ordering, avoids type drift).
-    "date", "start_date", "end_date", "feed_start_date", "feed_end_date",
+    "date",
+    "start_date",
+    "end_date",
+    "feed_start_date",
+    "feed_end_date",
     # Time-of-day columns — strings, because values can exceed 24:00:00.
-    "arrival_time", "departure_time", "start_time", "end_time",
+    "arrival_time",
+    "departure_time",
+    "start_time",
+    "end_time",
 }
 
 
@@ -42,15 +78,20 @@ def load_gtfs(path: str) -> Dict[str, pd.DataFrame]:
     and time-of-day columns are read as strings; everything else uses pandas'
     inference. Missing files are simply absent from the dict — callers should
     check with `"calendar" in feed`, etc.
+
+    Both flat zips and zips with all .txt files nested in a single subdirectory
+    (some agencies ship feeds that way) are handled — the basename of each .txt
+    becomes the dict key regardless of zip layout.
     """
     feed: Dict[str, pd.DataFrame] = {}
 
     if path.endswith(".zip"):
         with zipfile.ZipFile(path) as z:
-            names = [n for n in z.namelist() if n.endswith(".txt")]
-            for name in names:
-                with z.open(name) as f:
-                    feed[name[:-4]] = _read_csv(f)
+            for member in z.namelist():
+                base = os.path.basename(member)
+                if base.endswith(".txt") and base != "":
+                    with z.open(member) as f:
+                        feed[base[:-4]] = _read_csv(f)
     else:
         for name in os.listdir(path):
             if name.endswith(".txt"):
@@ -65,8 +106,13 @@ def _read_csv(buf) -> pd.DataFrame:
     header = raw.split(b"\n", 1)[0].decode("utf-8-sig").strip()
     cols = [c.strip() for c in header.split(",")]
     dtype = {c: str for c in cols if c in _ID_COLS}
-    return pd.read_csv(io.BytesIO(raw), dtype=dtype, keep_default_na=False,
-                       na_values=[""], encoding="utf-8-sig")
+    return pd.read_csv(
+        io.BytesIO(raw),
+        dtype=dtype,
+        keep_default_na=False,
+        na_values=[""],
+        encoding="utf-8-sig",
+    )
 
 
 def time_to_seconds(t: str) -> int | float:
@@ -108,11 +154,20 @@ def service_ids_active_on(feed: Dict[str, pd.DataFrame], date) -> Set[str]:
       - calendar_dates.txt exception_type=2 REMOVES it.
       - If calendar.txt is absent, only the explicit additions in
         calendar_dates apply.
+      - If both files are absent or empty, returns an empty set (rather than
+        crashing) — the feed defines no scheduled service.
     """
     date = _normalize_date(date)
     weekday = _dt.datetime.strptime(date, "%Y%m%d").weekday()
-    weekday_col = ["monday", "tuesday", "wednesday", "thursday",
-                   "friday", "saturday", "sunday"][weekday]
+    weekday_col = [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    ][weekday]
 
     active: Set[str] = set()
     if "calendar" in feed and not feed["calendar"].empty:
@@ -120,7 +175,11 @@ def service_ids_active_on(feed: Dict[str, pd.DataFrame], date) -> Set[str]:
         # Weekday columns and exception_type may be parsed as int OR str depending on
         # the feed — pandas infers them. Coerce to str for a uniform comparison.
         weekday_flag = cal[weekday_col].astype(str)
-        mask = (cal["start_date"] <= date) & (cal["end_date"] >= date) & (weekday_flag == "1")
+        mask = (
+            (cal["start_date"] <= date)
+            & (cal["end_date"] >= date)
+            & (weekday_flag == "1")
+        )
         active.update(cal.loc[mask, "service_id"])
 
     if "calendar_dates" in feed and not feed["calendar_dates"].empty:
@@ -153,11 +212,15 @@ def route_id_from_short_name(feed: Dict[str, pd.DataFrame], short_name: str) -> 
     if match.empty:
         raise LookupError(f"No route with short_name={short_name!r}")
     if len(match) > 1:
-        raise LookupError(f"Multiple routes with short_name={short_name!r}: {match['route_id'].tolist()}")
+        raise LookupError(
+            f"Multiple routes with short_name={short_name!r}: {match['route_id'].tolist()}"
+        )
     return match.iloc[0]["route_id"]
 
 
-def pick_representative_date(feed: Dict[str, pd.DataFrame], weekday: str = "weekday") -> str:
+def pick_representative_date(
+    feed: Dict[str, pd.DataFrame], weekday: str = "weekday"
+) -> str:
     """Pick a "typical" date from the feed's coverage window.
 
     The first and last days of a feed often have holiday/launch exceptions
@@ -203,9 +266,12 @@ def pick_representative_date(feed: Dict[str, pd.DataFrame], weekday: str = "week
     return best[1]
 
 
-def pick_representative_stop(feed: Dict[str, pd.DataFrame], route_id: str,
-                             direction_id: str | None = None,
-                             date: str | None = None) -> str:
+def pick_representative_stop(
+    feed: Dict[str, pd.DataFrame],
+    route_id: str,
+    direction_id: str | None = None,
+    date: str | None = None,
+) -> str:
     """Pick a mid-line stop suitable for measuring headway / frequency.
 
     A terminus is a bad choice: trips both start and end there, departure
@@ -225,22 +291,31 @@ def pick_representative_stop(feed: Dict[str, pd.DataFrame], route_id: str,
         active = service_ids_active_on(feed, date)
         trips = trips[trips["service_id"].isin(active)]
     if trips.empty:
-        raise LookupError(f"No trips for route_id={route_id} (dir={direction_id}, date={date})")
+        raise LookupError(
+            f"No trips for route_id={route_id} (dir={direction_id}, date={date})"
+        )
 
     st = feed["stop_times"][feed["stop_times"]["trip_id"].isin(trips["trip_id"])]
     if st.empty:
         raise LookupError("No stop_times for those trips")
 
     # Count trips per stop, and find each stop's mean position along the trip
-    # as a fraction of trip length (0=start, 1=end).
+    # as a fraction of trip length (0=start, 1=end). Drop rows with missing
+    # stop_sequence rather than crashing on the cast.
     st = st.copy()
+    st = st[st["stop_sequence"].notna() & (st["stop_sequence"].astype(str) != "")]
     st["stop_sequence"] = st["stop_sequence"].astype(int)
     trip_len = st.groupby("trip_id")["stop_sequence"].agg(["min", "max"])
     st = st.merge(trip_len, left_on="trip_id", right_index=True)
-    st["pos"] = (st["stop_sequence"] - st["min"]) / (st["max"] - st["min"]).replace(0, 1)
+    st["pos"] = (st["stop_sequence"] - st["min"]) / (st["max"] - st["min"]).replace(
+        0, 1
+    )
 
-    agg = st.groupby("stop_id").agg(n_trips=("trip_id", "nunique"),
-                                    mean_pos=("pos", "mean")).reset_index()
+    agg = (
+        st.groupby("stop_id")
+        .agg(n_trips=("trip_id", "nunique"), mean_pos=("pos", "mean"))
+        .reset_index()
+    )
     # Pick stops with the max trip count, then the one closest to mid-line.
     top = agg[agg["n_trips"] == agg["n_trips"].max()].copy()
     top["dist_from_mid"] = (top["mean_pos"] - 0.5).abs()
